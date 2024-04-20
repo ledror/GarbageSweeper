@@ -2,6 +2,7 @@ package main
 
 import (
 	"cmp"
+	"encoding/gob"
 	"fmt"
 	"os"
 	"os/signal"
@@ -15,8 +16,10 @@ import (
 )
 
 const (
-	tokenFileName = ".bottoken"
-	owner         = "YOUR-DISCORD-ID"
+	tokenFileName  = ".bottoken"
+	abusedGob      = "abused.gob"
+	abusedCountGob = "abusedCount.gob"
+	owner          = "YOUR-DISCORD-ID"
 )
 
 type GuildUser struct {
@@ -52,8 +55,66 @@ func init() {
 	}
 	token = string(tokenContent)
 	token = strings.TrimSuffix(token, "\n")
-	abused = make(AbusedMap)
-	abusedCount = make(AbusedCountMap)
+	abused = loadAbusedMap()
+	abusedCount = loadAbusedCountMap()
+	fmt.Println(abused)
+	fmt.Println(abusedCount)
+}
+
+func loadAbusedMap() AbusedMap {
+	abuseMapFile, err := os.Open(abusedGob)
+	if err != nil {
+		return make(AbusedMap)
+	}
+	defer abuseMapFile.Close()
+	decoder := gob.NewDecoder(abuseMapFile)
+	m := make(AbusedMap)
+	err = decoder.Decode(&m)
+	if err != nil {
+		return make(AbusedMap)
+	}
+	return m
+}
+
+func loadAbusedCountMap() AbusedCountMap {
+	abuseCountMapFile, err := os.Open(abusedCountGob)
+	if err != nil {
+		return make(AbusedCountMap)
+	}
+	defer abuseCountMapFile.Close()
+	decoder := gob.NewDecoder(abuseCountMapFile)
+	m := make(AbusedCountMap)
+	err = decoder.Decode(&m)
+	if err != nil {
+		return make(AbusedCountMap)
+	}
+	return m
+}
+
+func storeAbusedMap() error {
+	abuseMapFile, err := os.OpenFile(abusedGob, os.O_CREATE|os.O_WRONLY, 0666)
+	if err != nil {
+		return err
+	}
+	defer abuseMapFile.Close()
+	encoder := gob.NewEncoder(abuseMapFile)
+	if err := encoder.Encode(abused); err != nil {
+		return err
+	}
+	return nil
+}
+
+func storeAbusedCountMap() error {
+	abusedCountMap, err := os.OpenFile(abusedCountGob, os.O_CREATE|os.O_WRONLY, 0666)
+	if err != nil {
+		return err
+	}
+	defer abusedCountMap.Close()
+	encoder := gob.NewEncoder(abusedCountMap)
+	if err := encoder.Encode(abusedCount); err != nil {
+		return err
+	}
+	return nil
 }
 
 func main() {
@@ -79,6 +140,12 @@ func main() {
 	sc := make(chan os.Signal)
 	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
 	<-sc
+	if err := storeAbusedMap(); err != nil {
+		fmt.Println("Error storing abused map", err)
+	}
+	if err := storeAbusedCountMap(); err != nil {
+		fmt.Println("Error storing abused count map", err)
+	}
 
 	session.Close()
 }
@@ -138,7 +205,9 @@ func addAbuse(s *discordgo.Session, userID string, guildID string, channelID str
 	fmt.Printf("Abusing %s in %s\n", userID, guildID)
 	message := fmt.Sprintf("abusing <@%s>, enjoy :)", userID)
 	s.ChannelMessageSend(channelID, message)
-	disconnectUser(s, guildID, userID)
+	if isUserInVC(s, guildID, userID) {
+		disconnectUser(s, guildID, userID)
+	}
 }
 
 func addPardon(s *discordgo.Session, userID string, guildID string, channelID string) {
@@ -208,24 +277,23 @@ func countAbused(s *discordgo.Session, guildID string, channelID string) {
 	s.ChannelMessageSend(channelID, message)
 }
 
-func disconnectUser(s *discordgo.Session, guildID string, userID string) {
+func isUserInVC(s *discordgo.Session, guildID string, userID string) bool {
 	guild, err := s.State.Guild(guildID)
 	if err != nil {
 		fmt.Printf("Couldn't find guildID %s", guildID)
-		return
+		return false
 	}
-	found := false
 	for _, key := range guild.VoiceStates {
 		if userID == key.UserID {
-			found = true
-			break
+			return true
 		}
 	}
-	if !found {
-		fmt.Printf("Couldn't find user %s in %s\n", userID, guildID)
-		return
-	}
-	err = s.GuildMemberMove(guildID, userID, nil)
+	fmt.Printf("Couldn't find user %s in %s\n", userID, guildID)
+	return false
+}
+
+func disconnectUser(s *discordgo.Session, guildID string, userID string) {
+	err := s.GuildMemberMove(guildID, userID, nil)
 	if err != nil {
 		fmt.Printf("Couldn't disconnect user %s on %s: %v\n", userID, guildID, err)
 		return
@@ -241,6 +309,8 @@ func voiceStateUpdate(s *discordgo.Session, event *discordgo.VoiceStateUpdate) {
 		return
 	}
 	if _, ok := abused[event.GuildID][event.UserID]; ok {
-		disconnectUser(s, event.GuildID, event.UserID)
+		if isUserInVC(s, event.GuildID, event.UserID) {
+			disconnectUser(s, event.GuildID, event.UserID)
+		}
 	}
 }
