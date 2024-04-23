@@ -155,18 +155,24 @@ func ready(s *discordgo.Session, event *discordgo.Event) {
 }
 
 func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
-	if m.Author.ID == s.State.User.ID || m.Author.ID != owner {
+	if m.Author.ID == s.State.User.ID {
 		return
 	}
 
 	// fmt.Println(m.Content)
 
 	if strings.HasPrefix(m.Content, "!abuse") {
+		if m.Author.ID != owner {
+			return
+		}
 		user := identifyUserInCommand(m)
 		if user != "" {
 			addAbuse(s, user, m.GuildID, m.ChannelID)
 		}
 	} else if strings.HasPrefix(m.Content, "!pardon") {
+		if m.Author.ID != owner {
+			return
+		}
 		user := identifyUserInCommand(m)
 		if user != "" {
 			addPardon(s, user, m.GuildID, m.ChannelID)
