@@ -274,7 +274,7 @@ func countAbused(s *discordgo.Session, guildID string, channelID string) {
 	}
 
 	slices.SortFunc(userCounts, func(a, b UserCount) int {
-		return cmp.Compare(a.count, b.count)
+		return -cmp.Compare(a.count, b.count)
 	})
 
 	for rank, userCount := range userCounts {
